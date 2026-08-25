@@ -21,6 +21,7 @@ _prev_net = None
 _prev_net_time = None
 
 def init_csv():
+    os.makedirs(os.path.dirname(CSV_FILE), exist_ok=True)
     try:
         with open(CSV_FILE, "x", newline="") as f:
             csv.writer(f).writerow(["scan_id","timestamp","device_id","device_type","metric_name","metric_value","unit","collection_method","collector_id","is_injected_anomaly","notes"])
