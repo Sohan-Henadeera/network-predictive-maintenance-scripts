@@ -71,6 +71,8 @@ Open a new terminal on your OWN PC, not the Pi's SSH session:
 - 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/normal/normal_data.csv ~/Downloads/'
 - 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/anomaly/anomaly_data.csv ~/Downloads/'
 
+scp **pi**@raspberrypi.local:~/network-predictive-maintenance-scripts/Data/normal.csv **C:/Users/sohan/Desktop/**network-predictive-maintenance-scripts/Data/
+
 
 
 
