@@ -1,0 +1,91 @@
+# Setup and usage instructions
+
+The full purpose of this file is to serve as a walkthrough for setting up a Rapberry Pi as a data collector, running the collection scripts, and getting the output data off the Pi.
+
+# 1. Prerequisites
+
+- A Raspberry Pi running Raspberry Pi OS, connected to the network you want to monitor
+- Either SSH access, or a keyboard/monitor plugged directly into the Pi
+- The Pi's IP address or hostname — check your router's admin page, or run `hostname -I` on the Pi directly if you have a screen attached
+
+# 2. Log into the Pi
+
+- From your own computer's terminal: 'ssh pi@<pi-ip-or-hostname>.local
+Entre Pi password when prompted
+
+# 3. Confirm Python is available
+
+- In the Pi terminal entre: 'python3 --version'
+
+# 4. Install system level tools
+
+- 'sudo apt update && sudo apt install -y git arp-scan nmap' in you Pi terminal.
+
+# 5. Clone this repository onto the Pi
+
+- 'cd ~'
+- 'git clone https://github.com/Sohan-Henadeera/network-predictive-maintenance-scripts.git'
+- 'cd network-predictive-maintenance-scripts'
+
+# 6. Install Python dependencies
+
+- 'pip3 install -r requirements.txt'
+
+# 7. Configure the scripts for your network
+
+- Find your router's IP:
+- 'ip route | grep default'
+- Open the normal collector to edit its target(s):
+- 'nano scripts/Metric_normal.py'
+
+- Update `PING_TARGETS` and `PORT_SCAN_TARGET` to match your network, then save with `Ctrl+O`, `Enter`, `Ctrl+X`. Repeat for `scripts/collector_anomaly.py`.
+
+# 8. Run the normal collector
+
+- Use this during the baseline/normal data collection phase — no attacks or faults running:
+- 'sudo python3 scripts/Metric_normal.py'
+- A new `Scan #N` block prints every collection cycle. Leave it running for your full collection window, stop with `Ctrl+C`.
+
+To keep it running after disconnecting your SSH session:
+- 'nohup sudo python3 scripts/Metric_normal.py > collector.log 2>&1 &'
+
+
+    ##        ANOMALY COLLECTOR     ##
+
+# 9. Run the anomaly collector (during attack/fault simulation)
+
+- Once your dedicated attack device starts its ping flood/port scan, run this on the target device (or wherever you're collecting from):
+- 'sudo python3 scripts/Metric_anomaly.py'
+- This writes to a separate location so anomaly data never mixes with the normal baseline.
+
+# 10. Check what's been collected
+
+- 'cat data/normal/normal_data.csv'
+- 'cat data/anomaly/anomaly_data.csv'
+- Or a more readable table view: 'column -s, -t data/normal/normal_data.csv | less -S'
+
+# 11. Download the data to your own computer
+
+Open a new terminal on your OWN PC, not the Pi's SSH session:
+
+- 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/normal/normal_data.csv ~/Downloads/'
+- 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/anomaly/anomaly_data.csv ~/Downloads/'
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+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
