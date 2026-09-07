@@ -5,7 +5,7 @@ import time
 import os
 from datetime import datetime, timezone
 
-DEVICE_NAME = "Pi_1"               # change per device: Pi_1, Pi_2, Pi_3, etc.
+DEVICE_NAME = "Pi_1"               # change per device: Pi_1, Pi_2, Pi_3.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_FILE = os.path.join(SCRIPT_DIR, "..", "Data", "normal.csv")
 INTERVAL_SECONDS = 10

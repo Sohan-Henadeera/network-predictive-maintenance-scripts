@@ -5,7 +5,7 @@ The full purpose of this file is to serve as a walkthrough for setting up a Rapb
 # 1. Prerequisites
 
 - A Raspberry Pi running Raspberry Pi OS, connected to the network you want to monitor
-- Either SSH access, or a keyboard/monitor plugged directly into the Pi
+- Raspberry Pi connected to network through router 
 - The Pi's IP address or hostname — check your router's admin page, or run `hostname -I` on the Pi directly if you have a screen attached
 
 # 2. Log into the Pi
@@ -49,27 +49,16 @@ Entre Pi password when prompted
 To keep it running after disconnecting your SSH session:
 - 'nohup sudo python3 scripts/Metric_normal.py > collector.log 2>&1 &'
 
-
-    ##        ANOMALY COLLECTOR     ##
-
-# 9. Run the anomaly collector (during attack/fault simulation)
-
-- Once your dedicated attack device starts its ping flood/port scan, run this on the target device (or wherever you're collecting from):
-- 'sudo python3 scripts/Metric_anomaly.py'
-- This writes to a separate location so anomaly data never mixes with the normal baseline.
-
 # 10. Check what's been collected
 
 - 'cat data/normal/normal_data.csv'
-- 'cat data/anomaly/anomaly_data.csv'
 - Or a more readable table view: 'column -s, -t data/normal/normal_data.csv | less -S'
 
 # 11. Download the data to your own computer
 
-Open a new terminal on your OWN PC, not the Pi's SSH session:
+Open a new terminal on separate PC, not the Pi's SSH session:
 
 - 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/normal/normal_data.csv ~/Downloads/'
-- 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/anomaly/anomaly_data.csv ~/Downloads/'
 
 scp **pi**@raspberrypi.local:~/network-predictive-maintenance-scripts/Data/normal.csv **C:/Users/sohan/Desktop/**network-predictive-maintenance-scripts/Data/
 
