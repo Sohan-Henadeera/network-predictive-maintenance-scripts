@@ -17,6 +17,12 @@ PING_TARGETS = {
     "Pi_3": "192.168.1.103",
 }
 
+# --- Sync-to-PC settings ---
+PC_IP = "192.168.1.50"              # change to your PC's IP address (run "ipconfig" on your PC to find it)
+PC_USER = "sohan"                   # change to your Windows username
+PC_DEST = "C:/Users/sohan/Desktop/network-data-sync/"   # folder on your PC — must already exist
+SYNC_EVERY_N_SCANS = 3              # 3 scans x 10s = sync roughly every 30 seconds
+
 _prev_net = None
 _prev_net_time = None
 
@@ -115,10 +121,23 @@ def flush(rows):
     with open(CSV_FILE, "a", newline="") as f:
         csv.writer(f).writerows(rows)
 
+def sync_to_pc():
+    """Push the CSV file to the PC over the network. Runs every SYNC_EVERY_N_SCANS scans,
+    not every scan, so we're not opening a new network connection every 10 seconds."""
+    try:
+        subprocess.run(
+            ["scp", CSV_FILE, f"{PC_USER}@{PC_IP}:{PC_DEST}"],
+            timeout=10, check=True
+        )
+        print(f"  [sync] pushed {os.path.basename(CSV_FILE)} to {PC_USER}@{PC_IP}")
+    except Exception as e:
+        print(f"  [sync] failed, will retry next cycle: {e}")
+
 if __name__ == "__main__":
     init_csv()
     scan_id = 0
-    print(f"[{DEVICE_NAME}] NORMAL collection every {INTERVAL_SECONDS}s. Ctrl+C to stop.")
+    sync_seconds = INTERVAL_SECONDS * SYNC_EVERY_N_SCANS
+    print(f"[{DEVICE_NAME}] scanning every {INTERVAL_SECONDS}s, syncing to PC every {sync_seconds}s. Ctrl+C to stop.")
     while True:
         scan_id += 1
         ts = datetime.now(timezone.utc).isoformat()
@@ -130,4 +149,9 @@ if __name__ == "__main__":
         collect_throughput_and_errors(rows, scan_id, ts)
         collect_device_count(rows, scan_id, ts)
         flush(rows)
+
+        # every 3rd scan (~30s), push the accumulated data to the PC instead of every single scan
+        if scan_id % SYNC_EVERY_N_SCANS == 0:
+            sync_to_pc()
+
         time.sleep(INTERVAL_SECONDS)
