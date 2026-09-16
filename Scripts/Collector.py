@@ -5,7 +5,10 @@ import time
 import os
 from datetime import datetime, timezone
 
-DEVICE_NAME = "Pi_1"               # change per device: Pi_1, Pi_2, Pi_3.
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
+
+DEVICE_NAME = "Pi_1"               # change per device: Pi_1, Pi_2, Pi_3, Pi_4
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CSV_FILE = os.path.join(SCRIPT_DIR, "..", "Data", "normal.csv")
 INTERVAL_SECONDS = 10
@@ -17,26 +20,56 @@ PING_TARGETS = {
     "Pi_3": "192.168.1.103",
 }
 
-# --- Sync-to-PC settings ---
-PC_IP = "192.168.1.50"              # change to your PC's IP address (run "ipconfig" on your PC to find it)
-PC_USER = "sohan"                   # change to your Windows username
-PC_DEST = "C:/Users/sohan/Desktop/network-data-sync/"   # folder on your PC — must already exist
-SYNC_EVERY_N_SCANS = 3              # 3 scans x 10s = sync roughly every 30 seconds
+# --- InfluxDB connection settings ---
+INFLUX_URL = "http://192.168.0.152:8086"   # Database Pi's IP
+INFLUX_TOKEN = "REPLACE_WITH_ROTATED_TOKEN"
+INFLUX_ORG = "Capstone Group 25"
+INFLUX_BUCKET = "pi_1"                     # one bucket per device, matches DEVICE_NAME
+PUSH_EVERY_N_SCANS = 3                     # 3 scans x 10s = push roughly every 30 seconds
+
+influx_client = InfluxDBClient(url=INFLUX_URL, token=INFLUX_TOKEN, org=INFLUX_ORG)
+write_api = influx_client.write_api(write_options=SYNCHRONOUS)
 
 _prev_net = None
 _prev_net_time = None
+_points_buffer = []   # accumulates across scans, flushed to Influx every PUSH_EVERY_N_SCANS
+
 
 def init_csv():
     os.makedirs(os.path.dirname(CSV_FILE), exist_ok=True)
     try:
         with open(CSV_FILE, "x", newline="") as f:
-            csv.writer(f).writerow(["scan_id","timestamp","device_id","device_type","metric_name","metric_value","unit","collection_method","collector_id","is_injected_anomaly","notes"])
+            csv.writer(f).writerow(["scan_id", "timestamp", "device_id", "device_type", "metric_name",
+                                     "metric_value", "unit", "collection_method", "collector_id",
+                                     "is_injected_anomaly", "notes"])
     except FileExistsError:
         pass
 
+
 def add_row(rows, scan_id, ts, device_id, device_type, metric_name, value, unit, method, notes=""):
+    # local CSV — written every scan (every 10s), independent of the Influx push cadence
     rows.append([scan_id, ts, device_id, device_type, metric_name, value, unit, method, DEVICE_NAME, 0, notes])
     print(f"  [{scan_id}] {device_id:12s} | {metric_name:24s} = {value} {unit}")
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return
+
+    point = (
+        Point("network_metrics")
+        .tag("collector_id", DEVICE_NAME)
+        .tag("device_id", device_id)
+        .tag("device_type", device_type)
+        .tag("metric_name", metric_name)
+        .tag("unit", unit)
+        .tag("collection_method", method)
+        .field("value", numeric_value)
+        .field("is_injected_anomaly", 0)
+        .time(ts)
+    )
+    _points_buffer.append(point)
+
 
 def collect_ping(rows, scan_id, ts, device_id, ip):
     try:
@@ -47,11 +80,13 @@ def collect_ping(rows, scan_id, ts, device_id, ip):
         rtt_match = re.search(r"= [\d.]+/([\d.]+)/", output)
         avg_latency = float(rtt_match.group(1)) if rtt_match else None
         reachable = 0 if packet_loss == 100.0 else 1
-        add_row(rows, scan_id, ts, device_id, "peer_device", "latency_ms", avg_latency if avg_latency is not None else "", "ms", "ping")
+        add_row(rows, scan_id, ts, device_id, "peer_device", "latency_ms",
+                avg_latency if avg_latency is not None else "", "ms", "ping")
         add_row(rows, scan_id, ts, device_id, "peer_device", "packet_loss_pct", packet_loss, "%", "ping")
         add_row(rows, scan_id, ts, device_id, "peer_device", "reachability", reachable, "bool", "ping")
     except Exception as e:
         print(f"  ping failed for {device_id}: {e}")
+
 
 def collect_self_metrics(rows, scan_id, ts):
     try:
@@ -73,6 +108,7 @@ def collect_self_metrics(rows, scan_id, ts):
             add_row(rows, scan_id, ts, DEVICE_NAME, "self", "temperature_c", float(temp_match.group(1)), "C", "vcgencmd")
     except Exception as e:
         print(f"  vcgencmd failed: {e}")
+
 
 def collect_throughput_and_errors(rows, scan_id, ts):
     global _prev_net, _prev_net_time
@@ -109,6 +145,7 @@ def collect_throughput_and_errors(rows, scan_id, ts):
     except Exception as e:
         print(f"  throughput/error read failed: {e}")
 
+
 def collect_device_count(rows, scan_id, ts):
     try:
         result = subprocess.run(["arp-scan", "--localnet"], capture_output=True, text=True, timeout=30)
@@ -117,27 +154,31 @@ def collect_device_count(rows, scan_id, ts):
     except Exception as e:
         print(f"  arp-scan failed (needs install + sudo): {e}")
 
-def flush(rows):
+
+def flush_csv(rows):
     with open(CSV_FILE, "a", newline="") as f:
         csv.writer(f).writerows(rows)
 
-def sync_to_pc():
-    """Push the CSV file to the PC over the network. Runs every SYNC_EVERY_N_SCANS scans,
-    not every scan, so we're not opening a new network connection every 10 seconds."""
+
+def flush_influx():
+    """Push everything accumulated in _points_buffer since the last push, then clear it."""
+    global _points_buffer
+    if not _points_buffer:
+        return
     try:
-        subprocess.run(
-            ["scp", CSV_FILE, f"{PC_USER}@{PC_IP}:{PC_DEST}"],
-            timeout=10, check=True
-        )
-        print(f"  [sync] pushed {os.path.basename(CSV_FILE)} to {PC_USER}@{PC_IP}")
+        write_api.write(bucket=INFLUX_BUCKET, org=INFLUX_ORG, record=_points_buffer)
+        print(f"  [influx] pushed {len(_points_buffer)} points to bucket '{INFLUX_BUCKET}'")
+        _points_buffer = []
     except Exception as e:
-        print(f"  [sync] failed, will retry next cycle: {e}")
+        # leave the buffer intact on failure — retry on the next push instead of losing points
+        print(f"  [influx] push failed, will retry next cycle with buffer still intact: {e}")
+
 
 if __name__ == "__main__":
     init_csv()
     scan_id = 0
-    sync_seconds = INTERVAL_SECONDS * SYNC_EVERY_N_SCANS
-    print(f"[{DEVICE_NAME}] scanning every {INTERVAL_SECONDS}s, syncing to PC every {sync_seconds}s. Ctrl+C to stop.")
+    push_seconds = INTERVAL_SECONDS * PUSH_EVERY_N_SCANS
+    print(f"[{DEVICE_NAME}] scanning every {INTERVAL_SECONDS}s, pushing to InfluxDB every {push_seconds}s. Ctrl+C to stop.")
     while True:
         scan_id += 1
         ts = datetime.now(timezone.utc).isoformat()
@@ -148,10 +189,11 @@ if __name__ == "__main__":
         collect_self_metrics(rows, scan_id, ts)
         collect_throughput_and_errors(rows, scan_id, ts)
         collect_device_count(rows, scan_id, ts)
-        flush(rows)
 
-        # every 3rd scan (~30s), push the accumulated data to the PC instead of every single scan
-        if scan_id % SYNC_EVERY_N_SCANS == 0:
-            sync_to_pc()
+        flush_csv(rows)
+
+        # every 3rd scan (~30s), push everything accumulated so far to InfluxDB
+        if scan_id % PUSH_EVERY_N_SCANS == 0:
+            flush_influx()
 
         time.sleep(INTERVAL_SECONDS)

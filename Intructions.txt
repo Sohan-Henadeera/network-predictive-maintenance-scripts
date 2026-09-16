@@ -1,82 +1,134 @@
-# Setup and usage instructions
+Raspberry Pi Network Monitoring — Setup Guide (Final)
+One repo, two roles. Collector Pis (Pi_1–Pi_4) run collector.py, scanning every 10 seconds and pushing accumulated data into InfluxDB every 30 seconds. Database Pi (Jacob's) hosts InfluxDB + Grafana and never runs the collector.
 
-The full purpose of this file is to serve as a walkthrough for setting up a Rapberry Pi as a data collector, running the collection scripts, and getting the output data off the Pi.
+There is no separate anomaly-collection phase or script — one collector, one cadence, for every device.
 
-# 1. Prerequisites
+Part 1 — Collector Pi Setup (Pi_1, Pi_2, Pi_3, Pi_4)
+Run this whole part on every collector Pi, one at a time. Steps 7 and 8 are the only ones that differ per device.
 
-- A Raspberry Pi running Raspberry Pi OS, connected to the network you want to monitor
-- Raspberry Pi connected to network through router 
-- The Pi's IP address or hostname — check your router's admin page, or run `hostname -I` on the Pi directly if you have a screen attached
+1. Prerequisites
+Raspberry Pi running Raspberry Pi OS, connected to the lab router/switch (Ethernet preferred over WiFi for consistent throughput readings)
+The Pi's IP address or hostname — check the router's DHCP client list, or run hostname -I on the Pi with a screen attached
+The Database Pi's IP address already set up and reachable (see Part 2) — you need this before configuring collectors
+2. Log into the Pi
+ssh pi@<pi-ip-or-hostname>.local
+Enter the Pi's password when prompted.
 
-# 2. Log into the Pi
+3. Confirm Python is available
+python3 --version
+4. Install system-level tools
+sudo apt update && sudo apt install -y git arp-scan nmap python3-full
+5. Clone the repository
+cd ~
+git clone https://github.com/Sohan-Henadeera/network-predictive-maintenance-scripts.git
+cd network-predictive-maintenance-scripts
+6. Set up the Python virtual environment and dependencies
+python3 -m venv influx-env
+source influx-env/bin/activate
+pip install -r requirements.txt
+pip install influxdb-client
+Reactivate the environment on future logins with source influx-env/bin/activate.
 
-- From your own computer's terminal: 'ssh pi@<pi-ip-or-hostname>.local
-Entre Pi password when prompted
+7. Configure this Pi's identity and network targets
+nano scripts/collector.py
+Edit these values for this specific Pi:
 
-# 3. Confirm Python is available
+DEVICE_NAME — "Pi_1", "Pi_2", "Pi_3", or "Pi_4" (must be unique per device)
+INTERFACE — "eth0" or "wlan0" depending on connection type
+PING_TARGETS — the router IP and the other Pis' IPs on this network
+To find the router's IP if you don't already have it:
 
-- In the Pi terminal entre: 'python3 --version'
+ip route | grep default
+Save with Ctrl+O, Enter, Ctrl+X.
 
-# 4. Install system level tools
+8. Configure the InfluxDB connection
+In the same file, set the Influx connection block:
 
-- 'sudo apt update && sudo apt install -y git arp-scan nmap' in you Pi terminal.
+INFLUX_URL = "http://<database-pi-ip>:8086"
+INFLUX_TOKEN = "<influx-api-token>"       # from Part 2, step 7 — never commit this to git
+INFLUX_ORG = "Capstone Group 25"
+INFLUX_BUCKET = "pi_1"                     # one bucket per device, matches DEVICE_NAME
+Each Pi writes to its own bucket, named after its device (pi_1, pi_2, etc.), created ahead of time on the Database Pi.
 
-# 5. Clone this repository onto the Pi
+9. Run the collector
+sudo python3 scripts/collector.py
+A new Scan #N block prints every 10 seconds. Every 3rd scan (~30 seconds) you'll see a [influx] pushed N points line — that's the batch landing in the database. Leave it running for the full collection window, stop with Ctrl+C.
 
-- 'cd ~'
-- 'git clone https://github.com/Sohan-Henadeera/network-predictive-maintenance-scripts.git'
-- 'cd network-predictive-maintenance-scripts'
+To keep it running after closing the SSH session:
 
-# 6. Install Python dependencies
+nohup sudo python3 scripts/collector.py > collector.log 2>&1 &
+10. Verify data is landing (from this Pi)
+tail -20 collector.log
+Confirm scans are printing AND you're seeing [influx] pushed lines roughly every 30 seconds, not [influx] push failed.
 
-- 'pip3 install -r requirements.txt'
+11. Local CSV backup (optional)
+The script still writes every scan to Data/normal.csv locally, independent of the Influx push. If you want to check it manually:
 
-# 7. Configure the scripts for your network
+cat Data/normal.csv
+Readable table view:
 
-- Find your router's IP:
-- 'ip route | grep default'
-- Open the normal collector to edit its target(s):
-- 'nano scripts/Metric_normal.py'
+column -s, -t Data/normal.csv | less -S
+This file stays on the Pi — nothing pushes it anywhere automatically.
 
-- Update `PING_TARGETS` and `PORT_SCAN_TARGET` to match your network, then save with `Ctrl+O`, `Enter`, `Ctrl+X`. Repeat for `scripts/collector_anomaly.py`.
+Part 2 — Database Pi Setup (Jacob's Pi, one-time only)
+This Pi does not run the collector script. It hosts InfluxDB and Grafana for the four collector Pis to write into and for the team to query.
 
-# 8. Run the normal collector
+1. System overview
+InfluxDB OSS 2.x — time-series database, web UI on port 8086
+Grafana — dashboarding tool, web UI on port 3000
+Both run locally on this Pi and are reachable from any device on the same network using the Pi's IP.
 
-- Use this during the baseline/normal data collection phase — no attacks or faults running:
-- 'sudo python3 scripts/Metric_normal.py'
-- A new `Scan #N` block prints every collection cycle. Leave it running for your full collection window, stop with `Ctrl+C`.
+2. Find this Pi's IP address
+hostname -I
+Share this IP with the team — it's what every collector Pi points at in Part 1, step 8.
 
-To keep it running after disconnecting your SSH session:
-- 'nohup sudo python3 scripts/Metric_normal.py > collector.log 2>&1 &'
+3. Access the web interfaces
+InfluxDB: http://<this-pi-ip>:8086
+Grafana: http://<this-pi-ip>:3000 (default login admin / admin, you'll be prompted to change it)
+4. Manage InfluxDB
+sudo systemctl start influxdb
+sudo systemctl stop influxdb
+sudo systemctl enable influxdb    # auto-start on boot
+sudo systemctl status influxdb
+5. Manage Grafana
+sudo systemctl start grafana-server
+sudo systemctl stop grafana-server
+sudo systemctl enable grafana-server
+sudo systemctl status grafana-server
+6. Create one bucket per collector Pi
+In the InfluxDB UI (Data → Buckets → Create Bucket), create pi_1, pi_2, pi_3, pi_4 — matching each collector's DEVICE_NAME. Separate buckets per device make it trivial to isolate a faulty Pi's data later without filtering.
 
-# 10. Check what's been collected
+7. Generate an API token
+Data → API Tokens → Generate Token — give it write access to all four buckets. Copy it into each collector Pi's INFLUX_TOKEN field (Part 1, step 8). Treat this token like a password — don't paste it into chat, commit it to the repo, or leave it in shared docs.
 
-- 'cat data/normal/normal_data.csv'
-- Or a more readable table view: 'column -s, -t data/normal/normal_data.csv | less -S'
+8. Connect Grafana to InfluxDB
+In Grafana: Configuration → Data Sources → Add InfluxDB
 
-# 11. Download the data to your own computer
+URL: http://<this-pi-ip>:8086
+Query language: Flux
+Organisation: Capstone Group 25
+Token: the token from step 7
+Bucket: set per dashboard panel, or one panel per Pi bucket
+Click Save & Test.
 
-Open a new terminal on separate PC, not the Pi's SSH session:
+9. Moving this Pi to a different network
+Only the IP changes. Re-run hostname -I, then update every collector Pi's INFLUX_URL in Part 1, step 8. All buckets, dashboards, and tokens carry over untouched.
 
-- 'scp pi@<pi-ip-or-hostname>.local:~/network-predictive-maintenance-scripts/data/normal/normal_data.csv ~/Downloads/'
+10. Safe shutdown
+sudo shutdown now
+or
 
-scp **pi**@raspberrypi.local:~/network-predictive-maintenance-scripts/Data/normal.csv **C:/Users/sohan/Desktop/**network-predictive-maintenance-scripts/Data/
+sudo poweroff
+Wait for the green LED to stop blinking before unplugging power.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-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
+Quick reference
+Task	Command
+Check Pi's IP	hostname -I
+Find router IP	ip route | grep default
+Run collector (foreground)	sudo python3 scripts/collector.py
+Run collector (background)	nohup sudo python3 scripts/collector.py > collector.log 2>&1 &
+Check collector's live log	tail -20 collector.log
+View local CSV backup	column -s, -t Data/normal.csv | less -S
+Start/stop InfluxDB	sudo systemctl start|stop influxdb
+Start/stop Grafana	sudo systemctl start|stop grafana-server
+Shut down safely	sudo shutdown now
